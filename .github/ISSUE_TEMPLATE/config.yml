@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Release notes
+    url: https://github.com/OwenWright8/shelvarr/releases
+    about: What changed in each version, and anything to do before upgrading.
+  - name: Self-hosting guide
+    url: https://github.com/OwenWright8/shelvarr#self-hosting
+    about: Installing, settings, updating and backups.

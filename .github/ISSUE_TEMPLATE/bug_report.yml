@@ -1,0 +1,32 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please check you're on the latest release first (Settings → bottom of the page shows your version).
+  - type: input
+    id: version
+    attributes:
+      label: Shelvarr version
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: servers
+    attributes:
+      label: Audiobookshelf versions
+      placeholder: Audiobookshelf 10.11.2, Shelfmark 3.0.1 (or Jellyseerr 2.x)
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: activity
+    attributes:
+      label: Activity page / container logs
+      description: Any errors from the Activity page or `docker compose logs shelvarr`. Remove API keys and webhook addresses.
+      render: text

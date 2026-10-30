@@ -1,0 +1,123 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag v1.0.0 && git push origin v1.0.0
+# Creates a GitHub Release (notes generated from merged PRs/commits since the
+# last tag, grouped by label — see .github/release.yml) and builds + pushes the
+# image to GHCR for amd64 and arm64, tagged with the version, its minor series
+# (e.g. 1.0, for pinning without missing bug fixes) and `latest`. A
+# pre-release (v1.0.0-rc.1) gets only its own tag, so nobody on `latest` is
+# moved onto it.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re-)release, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: read
+
+# Handed to steps through the environment, never interpolated into a script:
+# `tag` is free text when this is started by hand.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Validate tag format
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+            || { echo "Refusing to release: '$RELEASE_TAG' is not a vX.Y.Z tag"; exit 1; }
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+
+      # Changes often land straight on main rather than through PRs, which
+      # leaves the generated notes empty: list the commits since the last
+      # release too. The app's update prompt shows these notes.
+      - name: List changes since the last release
+        run: |
+          prev=$(git describe --tags --abbrev=0 --exclude='*-*' "$RELEASE_TAG^" 2>/dev/null || true)
+          {
+            echo "## What's changed"
+            echo
+            git log --no-merges --format='- %s' ${prev:+"$prev.."}"$RELEASE_TAG"
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          body_path: ${{ runner.temp }}/notes.md
+          generate_release_notes: true
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+
+  docker:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Validate tag format
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+            || { echo "Refusing to release: '$RELEASE_TAG' is not a vX.Y.Z tag"; exit 1; }
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR names must be lowercase; the owner keeps its casing ("OwenWright8").
+      - name: Compute image tags
+        id: tags
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          ns=$(echo "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "app<<EOF"
+            echo "ghcr.io/${ns}/shelvarr:${RELEASE_TAG}"
+            if [[ "$RELEASE_TAG" != *-* ]]; then
+              minor=$(echo "${RELEASE_TAG#v}" | cut -d. -f1-2)
+              echo "ghcr.io/${ns}/shelvarr:${minor}"
+              echo "ghcr.io/${ns}/shelvarr:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            SHELVARR_BUILD_VERSION=${{ env.RELEASE_TAG }}
+            SHELVARR_REPO=${{ github.repository }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: ${{ steps.tags.outputs.app }}

@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (HSL). Warm neutrals like Syllabase, with a teal primary. */
+@layer base {
+  :root {
+    --background: 40 30% 97%;
+    --foreground: 30 15% 15%;
+    --card: 40 25% 99.5%;
+    --card-foreground: 30 15% 15%;
+    --primary: 178 50% 30%;
+    --primary-foreground: 40 30% 98%;
+    --primary-soft: 178 40% 93%;
+    --secondary: 36 30% 92%;
+    --secondary-foreground: 30 22% 24%;
+    --muted: 38 22% 94%;
+    --muted-foreground: 30 9% 45%;
+    --accent: 28 42% 42%;
+    --accent-foreground: 40 30% 98%;
+    --destructive: 5 55% 46%;
+    --destructive-foreground: 40 30% 98%;
+    --success: 150 32% 36%;
+    --warning: 35 70% 44%;
+    --border: 35 18% 87%;
+    --input: 35 18% 84%;
+    --ring: 262 42% 52%;
+    --radius: 0.75rem;
+    --shadow-sm: 0 1px 2px hsl(30 20% 12% / 0.06);
+    --shadow-md: 0 2px 10px -2px hsl(30 20% 12% / 0.08), 0 1px 2px hsl(30 20% 12% / 0.05);
+    --shadow-lg: 0 12px 28px -8px hsl(30 20% 12% / 0.16), 0 2px 6px hsl(30 20% 12% / 0.06);
+    color-scheme: light;
+  }
+
+  .dark {
+    --background: 30 8% 9%;
+    --foreground: 38 18% 92%;
+    --card: 30 8% 12%;
+    --card-foreground: 38 18% 92%;
+    --primary: 178 45% 58%;
+    --primary-foreground: 30 12% 10%;
+    --primary-soft: 178 25% 17%;
+    --secondary: 30 8% 17%;
+    --secondary-foreground: 38 14% 85%;
+    --muted: 30 8% 15%;
+    --muted-foreground: 35 8% 62%;
+    --accent: 28 38% 55%;
+    --accent-foreground: 30 12% 10%;
+    --destructive: 5 50% 58%;
+    --destructive-foreground: 30 12% 10%;
+    --success: 150 30% 52%;
+    --warning: 38 65% 56%;
+    --border: 30 8% 21%;
+    --input: 30 8% 26%;
+    --ring: 262 55% 70%;
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 2px 10px -2px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 12px 28px -8px hsl(0 0% 0% / 0.55);
+    color-scheme: dark;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1, h2, h3 {
+    @apply tracking-tight;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

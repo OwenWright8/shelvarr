@@ -1,0 +1,41 @@
+# Shelvarr: keeps an Audiobookshelf library tidy and shared per person.
+#
+#     docker compose up -d
+#
+# then open http://<this-machine>:8687. Only the folders below need setting.
+# See the README for what to put in them.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  shelvarr:
+    image: ${SHELVARR_IMAGE_REPO:-ghcr.io/owenwright8/shelvarr}:${SHELVARR_VERSION:-latest}
+    build:
+      context: .
+    container_name: shelvarr
+    restart: unless-stopped
+    # Must be able to change your audiobook files: use the same user as
+    # Audiobookshelf and your downloader.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      UPDATE_CHECK: ${UPDATE_CHECK:-on}
+      TZ: ${TZ:-UTC}
+      AUDIOBOOKS_DIR: /media/audiobooks
+      INCOMING_DIR: /media/downloads/audiobooks
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      # One mount holding both folders, so a download can be hardlinked into the
+      # library: no space used twice, and the original can keep seeding.
+      - ${MEDIA_DIR:-./media}:/media
+    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    ports:
+      - "${APP_PORT:-8687}:8687"

@@ -1,0 +1,21 @@
+{
+  // Server, tests and scripts. Node runs these .ts files directly (type
+  // stripping), so only erasable TypeScript syntax is allowed and nothing is
+  // emitted: this config is for type-checking only.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["server", "test", "scripts"]
+}
