@@ -188,6 +188,9 @@ The database upgrades itself. Back up the `data` folder if you want to keep your
 **Do I have to use one shared library?**<br/>
 No. Use it just to organize, with your own library pointing at the `library` folder. The sharing only needs tags.
 
+**A book's name came out wrong?**<br/>
+Click the pencil under it in the **Library**. That renames its folder, and Audiobookshelf keeps it as the same book, with its progress. Undo is under **Activity**.
+
 **What about series folders (`Author/Series/Book`)?**<br/>
 Not yet: Shelvarr uses `Author/Book`. Audiobookshelf still shows series from its metadata.
 

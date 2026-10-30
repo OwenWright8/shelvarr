@@ -12,6 +12,8 @@ export interface Op {
   type: OpType;
   from: string;
   to: string;
+  /** Set when this renamed a whole book: its folder in the library, before and after. */
+  book?: { from: string; to: string };
 }
 
 export function sha256(file: string): Promise<string> {

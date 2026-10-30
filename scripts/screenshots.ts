@@ -170,6 +170,11 @@ try {
     await p.locator("div.relative", { hasText: "The Martian" }).first().getByRole("button", { name: "Add Owen" }).click();
     await p.locator("div.relative", { hasText: "The Martian" }).first().getByRole("button", { name: "Remove Owen" }).waitFor();
     await shot(p, "library");
+    await p.getByRole("button", { name: "Rename Airframe" }).click();
+    await p.getByLabel("Title").fill("Airframe (Crichton)");
+    await p.getByRole("dialog").getByRole("button", { name: "Rename" }).click();
+    await p.getByRole("button", { name: "Rename Airframe (Crichton)" }).waitFor();
+    if (!fs.existsSync(path.join(root, "library/Michael Crichton/Airframe (Crichton)"))) throw new Error("rename didn't reach the disk");
   });
   await step("access", async () => {
     await p.goto(`${base}/`);

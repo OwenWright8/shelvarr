@@ -540,6 +540,7 @@ export class Engine {
       try {
         await undoOp(op);
         dirs.add(path.dirname(op.to));
+        if (op.book) this.relinkBook(op.book.to, op.book.from);
       } catch (err) {
         problems.push(errorText(err));
       }
@@ -559,6 +560,64 @@ export class Engine {
     logActivity(this.db, "undo", `Undid “${row.label}”${problems.length ? ` (${plural(problems.length, "problem")})` : ""}`);
     await this.readDest(s);
     return { ok: !problems.length, problems };
+  }
+
+  /**
+   * Renames a book's folder. It's one rename of the folder, so Audiobookshelf
+   * sees the same item at a new path and listening progress stays with it.
+   */
+  async renameBook(rel: string, author: string, title: string): Promise<string> {
+    const s = this.settings();
+    const destRoot = this.destRoot(s);
+    if (!this.db.prepare("SELECT 1 FROM books WHERE rel_path = ?").get(rel)) throw new Error("That book isn't in the library");
+    if (!author.trim() || !title.trim()) throw new Error("It needs an author and a title");
+    const current = rel.split("/")[0];
+    // Join an author folder that already exists, unless this is fixing that author's spelling.
+    const known = nameKey(author) === nameKey(current) ? safeSegment(author) : (this.knownAuthors().get(nameKey(author)) ?? safeSegment(author));
+    const next = `${known}/${safeSegment(title)}`;
+    if (next === rel) return rel;
+    const from = path.join(destRoot, rel);
+    const to = path.join(destRoot, next);
+    assertInside(destRoot, from);
+    assertInside(destRoot, to);
+    if (!fs.existsSync(from)) throw new Error(`${rel} is no longer there. Scan again.`);
+    if (fs.existsSync(to)) throw new Error(`There's already a book at ${next}`);
+    const op = await placeFile("move", from, to);
+    removeEmptyUp(path.dirname(from), destRoot);
+    this.relinkBook(rel, next);
+    this.db
+      .prepare("INSERT INTO batches (at, label, ops, owners_before, proposals) VALUES (?, ?, ?, '[]', '[]')")
+      .run(Date.now(), `Renamed ${rel} to ${next}`, JSON.stringify([{ ...op, book: { from: rel, to: next } }]));
+    logActivity(this.db, "moved", `Renamed ${rel} to ${next}`);
+    await this.readDest(s);
+    await this.syncAbs(true).catch((err) => logActivity(this.db, "error", `Audiobookshelf: ${errorText(err)}`));
+    return next;
+  }
+
+  /** A book's folder changed: everything that points at it follows. */
+  private relinkBook(from: string, to: string) {
+    const destRoot = this.destRoot();
+    const [author, title] = to.split("/");
+    tx(this.db, () => {
+      this.db.prepare("UPDATE OR REPLACE owners SET rel_path = ? WHERE rel_path = ?").run(to, from);
+      this.db.prepare("UPDATE OR REPLACE books SET rel_path = ?, author = ?, title = ? WHERE rel_path = ?").run(to, author, title, from);
+      this.db.prepare("UPDATE proposals SET dest_rel = ? WHERE dest_rel = ?").run(to, from);
+      this.db.prepare("UPDATE proposals SET target_rel = ? WHERE target_rel = ?").run(to, from);
+      // Earlier changes can still be undone: their files are at the new path now.
+      const oldDir = path.join(destRoot, from) + path.sep;
+      const newDir = path.join(destRoot, to) + path.sep;
+      for (const b of this.db.prepare("SELECT id, ops FROM batches WHERE undone_at IS NULL").all() as { id: number; ops: string }[]) {
+        const ops = JSON.parse(b.ops) as Op[];
+        let changed = false;
+        for (const op of ops) {
+          if (op.to.startsWith(oldDir)) {
+            op.to = newDir + op.to.slice(oldDir.length);
+            changed = true;
+          }
+        }
+        if (changed) this.db.prepare("UPDATE batches SET ops = ? WHERE id = ?").run(JSON.stringify(ops), b.id);
+      }
+    });
   }
 
   trashSize(s = this.settings()): number {

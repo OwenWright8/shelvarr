@@ -411,6 +411,58 @@ test("a book is matched to its folder however the name is spelled", async () => 
   assert.ok(!fs.existsSync(lib("Daisy Hernandez")));
 });
 
+test("renaming a book moves its folder, and everything follows", async () => {
+  const shared = abs.libraries.find((l) => l.name === "Audiobooks")!;
+  await engine.syncAbs(true);
+  const before = [...abs.items.values()].find((i) => i.libraryId === shared.id && i.path.endsWith("Jeff Kinney/The Third Wheel"))!;
+  assert.ok(before);
+  const ownersBefore = ((await api("GET", "/api/books")).json as any[]).find((b) => b.rel === "Jeff Kinney/The Third Wheel").owners;
+
+  // The folder takes the new name, as one rename: same item, same tags.
+  const res = await api("POST", "/api/books/rename", { rel: "Jeff Kinney/The Third Wheel", author: "Jeff Kinney", title: "Third Wheel" });
+  assert.equal(res.json.rel, "Jeff Kinney/Third Wheel");
+  assert.ok(!fs.existsSync(lib("Jeff Kinney/The Third Wheel")));
+  assert.equal(tree(lib("Jeff Kinney/Third Wheel")).length, 1);
+  const after = abs.items.get(before.id)!;
+  assert.ok(after.path.endsWith("Jeff Kinney/Third Wheel"));
+  assert.deepEqual(after.tags, before.tags);
+  let books = (await api("GET", "/api/books")).json as any[];
+  assert.deepEqual(books.find((b) => b.rel === "Jeff Kinney/Third Wheel").owners, ownersBefore);
+
+  // Nothing's overwritten, and bad names stay out of the library.
+  assert.equal((await api("POST", "/api/books/rename", { rel: "Jeff Kinney/Third Wheel", author: "Andy Weir", title: "The Martian" })).status, 400);
+  assert.equal(tree(lib("Jeff Kinney/Third Wheel")).length, 1);
+  assert.equal((await api("POST", "/api/books/rename", { rel: "../../etc", author: "x", title: "y" })).status, 400);
+  const sneaky = await api("POST", "/api/books/rename", { rel: "Jeff Kinney/Third Wheel", author: "../..", title: "../../outside" });
+  assert.ok(sneaky.json.rel.split("/").every((seg: string) => !seg.startsWith(".")));
+
+  // A new author: the old author's folder goes if it's empty, and undo brings it all back.
+  const moved = (await api("POST", "/api/books/rename", { rel: sneaky.json.rel, author: "Jeff Kinney", title: "Third Wheel" })).json.rel;
+  const authored = await api("POST", "/api/books/rename", { rel: moved, author: "J. Kinney", title: "Third Wheel" });
+  assert.ok(!fs.existsSync(lib("Jeff Kinney")));
+  const batches = (await api("GET", "/api/batches")).json as any[];
+  await api("POST", `/api/batches/${batches[0].id}/undo`, {});
+  assert.ok(fs.existsSync(lib(moved)));
+  assert.ok(!fs.existsSync(lib(authored.json.rel)));
+  books = (await api("GET", "/api/books")).json as any[];
+  assert.deepEqual(books.find((b) => b.rel === moved).owners, ownersBefore);
+});
+
+test("an earlier change can still be undone after a rename", async () => {
+  const file = path.join(incoming, "Ann Patchett - Tom Lake.mp3");
+  writeBook(file, { album: "Tom Lake", albumartist: "Ann Patchett", artist: "Ann Patchett", title: "Tom Lake" }, 2600, 80);
+  await engine.tick();
+  assert.ok(fs.existsSync(lib("Ann Patchett/Tom Lake")));
+  const imported = ((await api("GET", "/api/batches")).json as any[]).find((b) => b.label === "New downloads");
+  await api("POST", "/api/books/rename", { rel: "Ann Patchett/Tom Lake", author: "Ann Patchett", title: "Tom Lake (Novel)" });
+  const res = await api("POST", `/api/batches/${imported.id}/undo`, {});
+  assert.deepEqual(res.json.problems, []);
+  assert.ok(!fs.existsSync(lib("Ann Patchett/Tom Lake (Novel)/Ann Patchett - Tom Lake.mp3")));
+  // The download itself was never touched.
+  assert.ok(fs.existsSync(file));
+  await api("POST", "/api/proposals/skip", { ids: (await proposals()).filter((p) => p.title === "Tom Lake").map((p) => p.id) });
+});
+
 test("the folders check says what's what", async () => {
   const f = (await api("GET", "/api/folders")).json;
   assert.equal(f.library.writable, true);

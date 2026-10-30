@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, CheckSquare, Minus, Plus, Search, Square, X } from "lucide-react";
+import { BookOpen, CheckSquare, Minus, Pencil, Plus, Search, Square, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, formatBytes, get, type Book, type Person } from "@/lib/api";
 import { PageHeader } from "@/components/Layout";
 import { Avatar, Cover, faceLabel, usePeople } from "@/components/people";
-import { Button, EmptyState, Input, PageSpinner, cn } from "@/components/ui";
+import { Button, EmptyState, Field, Input, Modal, PageSpinner, cn } from "@/components/ui";
 
 export default function LibraryPage() {
   const [params, setParams] = useSearchParams();
@@ -14,6 +14,7 @@ export default function LibraryPage() {
   const [q, setQ] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [renaming, setRenaming] = useState<Book | null>(null);
   const people = usePeople();
   const books = useQuery({ queryKey: ["books"], queryFn: () => get<Book[]>("/books") });
   const qc = useQueryClient();
@@ -96,6 +97,7 @@ export default function LibraryPage() {
                     selecting={selecting}
                     selected={selected.has(b.rel)}
                     onSelect={() => toggle(b.rel)}
+                    onRename={() => setRenaming(b)}
                     onToggle={(p) => change.mutate({ rels: [b.rel], ...(b.owners.includes(p.id) ? { remove: [p.id] } : { add: [p.id] }) })}
                   />
                 ))}
@@ -104,6 +106,7 @@ export default function LibraryPage() {
           ))}
         </div>
       )}
+      {renaming && <RenameModal book={renaming} onClose={() => setRenaming(null)} />}
       {selected.size > 0 && (
         <div className="fixed inset-x-3 bottom-20 z-40 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-2xl border bg-card p-3 shadow-lg lg:bottom-6">
           <span className="mr-auto text-sm font-semibold">{selected.size} selected</span>
@@ -119,7 +122,46 @@ export default function LibraryPage() {
   );
 }
 
-function BookCard({ b, people, selecting, selected, onSelect, onToggle }: { b: Book; people: Person[]; selecting: boolean; selected: boolean; onSelect: () => void; onToggle: (p: Person) => void }) {
+function RenameModal({ book, onClose }: { book: Book; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [author, setAuthor] = useState(book.author);
+  const [title, setTitle] = useState(book.title);
+  // "Diary of a Wimpy Kid - Big Shot": offer the part after the series name.
+  const shorter = book.title.includes(" - ") ? book.title.split(" - ").pop()! : null;
+  const save = useMutation({
+    mutationFn: () => api("POST", "/books/rename", { rel: book.rel, author, title }),
+    onSuccess: () => {
+      toast.success("Renamed. You can undo this under Activity.");
+      qc.invalidateQueries();
+      onClose();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Rename this book"
+      description="Renames its folder. Audiobookshelf keeps it as the same book, with its listening progress."
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!author.trim() || !title.trim()}>Rename</Button>
+        </>
+      }
+    >
+      <div className="space-y-4 pb-2">
+        <Field label="Author" htmlFor="r-author"><Input id="r-author" value={author} onChange={(e) => setAuthor(e.target.value)} /></Field>
+        <Field label="Title" htmlFor="r-title" hint={`Goes to ${author}/${title}`}><Input id="r-title" value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+        {shorter && shorter !== title && (
+          <button type="button" onClick={() => setTitle(shorter)} className="rounded-full border px-3 py-1 text-[13px] font-medium hover:bg-muted">Use “{shorter}”</button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function BookCard({ b, people, selecting, selected, onSelect, onRename, onToggle }: { b: Book; people: Person[]; selecting: boolean; selected: boolean; onSelect: () => void; onRename: () => void; onToggle: (p: Person) => void }) {
   return (
     <div className={cn("relative overflow-hidden rounded-xl border bg-card shadow-sm", selected && "ring-2 ring-primary")}>
       <button onClick={selecting ? onSelect : undefined} className={cn("block w-full", !selecting && "cursor-default")} tabIndex={selecting ? 0 : -1}>
@@ -127,7 +169,10 @@ function BookCard({ b, people, selecting, selected, onSelect, onToggle }: { b: B
       </button>
       {selecting && <span className="pointer-events-none absolute right-2 top-2 rounded bg-black/50 p-0.5 text-white">{selected ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}</span>}
       <div className="space-y-1.5 p-2">
-        <div className="truncate text-[13px] font-medium" title={b.title}>{b.title}</div>
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1 truncate text-[13px] font-medium" title={b.title}>{b.title}</div>
+          <button onClick={onRename} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`Rename ${b.title}`}><Pencil className="h-3 w-3" /></button>
+        </div>
         <div className="text-[11px] text-muted-foreground">{formatBytes(b.size)}{b.owners.length === 0 && " · nobody's"}</div>
         <div className="flex flex-wrap gap-1">
           {people.map((p) => {

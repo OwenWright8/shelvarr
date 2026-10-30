@@ -381,6 +381,15 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     }
   });
 
+  app.post<{ Body: { rel?: string; author?: string; title?: string } }>("/api/books/rename", async (req, reply) => {
+    try {
+      const rel = await engine.exclusive("Renaming", () => engine.renameBook(String(req.body?.rel ?? ""), String(req.body?.author ?? ""), String(req.body?.title ?? "")));
+      return { rel };
+    } catch (err) {
+      return reply.code(400).send({ error: errorText(err) });
+    }
+  });
+
   app.post<{ Body: { rels?: string[]; add?: number[]; remove?: number[] } }>("/api/books/owners", async (req, reply) => {
     const rels = arrayOf(req.body?.rels, "string").slice(0, 5000);
     const add = arrayOf(req.body?.add, "number");
