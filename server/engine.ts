@@ -188,9 +188,20 @@ export class Engine {
     });
   }
 
+  /** A suggestion whose files have all gone (moved by another suggestion, or by hand) is out of date. */
+  private dropStale(scope: Scope, s: Settings) {
+    const root = this.rootOf(scope, s);
+    const rows = this.db.prepare("SELECT id, files FROM proposals WHERE scope = ? AND status IN ('pending', 'failed')").all(scope) as { id: number; files: string }[];
+    for (const row of rows) {
+      const files = JSON.parse(row.files) as FoundFile[];
+      if (files.every((f) => !fs.existsSync(path.join(root, f.path)))) this.db.prepare("DELETE FROM proposals WHERE id = ?").run(row.id);
+    }
+  }
+
   /** Looks through the old per-person folders and the library for anything to tidy. */
   async scanLibrary(): Promise<number> {
     const s = this.settings();
+    this.dropStale("library", s);
     const people = listPeople(this.db);
     const { tidy, untidy } = await this.readDest(s);
     const destPrefix = s.destSubdir;
@@ -214,6 +225,7 @@ export class Engine {
   /** Looks for new downloads. Anything still changing is left for the next pass. */
   async scanIncoming(): Promise<number> {
     const s = this.settings();
+    this.dropStale("incoming", s);
     const { tidy } = await this.readDest(s);
     const settled = Date.now() - s.settleMinutes * 60_000;
     const found = (await scanBooks(s.incomingDir, { reader: this.reader }))

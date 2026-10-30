@@ -385,6 +385,16 @@ test("emptying the trash is the only real delete, and only when asked", async ()
   assert.ok(batches.some((b) => !b.canUndo && !b.undone));
 });
 
+test("a suggestion whose files have gone disappears on the next scan", async () => {
+  const file = path.join(root, "audiobooks-Owen/Kevin Kwan - Crazy Rich Asians.mp3");
+  writeBook(file, { album: "Crazy Rich Asians", albumartist: "Kevin Kwan", artist: "Kevin Kwan", title: "Crazy Rich Asians" }, 2100, 60);
+  await scan();
+  assert.ok((await proposals()).some((p) => p.title === "Crazy Rich Asians"));
+  fs.rmSync(file);
+  await scan();
+  assert.ok(!(await proposals()).some((p) => p.title === "Crazy Rich Asians"));
+});
+
 test("the folders check says what's what", async () => {
   const f = (await api("GET", "/api/folders")).json;
   assert.equal(f.library.writable, true);

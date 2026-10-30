@@ -24,7 +24,7 @@ export default function MovePage() {
     mutationFn: () => api<{ restored: number; waiting: number; problems: string[] }>("POST", "/migrate/restore", {}),
     onSuccess: (r) => {
       if (r.problems.length) toast.error(r.problems[0]);
-      else toast.success(`Restored ${r.restored} book${r.restored === 1 ? "" : "s"}${r.waiting ? `. ${r.waiting} are waiting for Audiobookshelf to finish scanning: try again in a minute` : ""}`);
+      else toast.success(`Restored ${r.restored} book${r.restored === 1 ? "" : "s"}${r.waiting ? `. ${r.waiting} couldn't be matched to a book in the shared library yet: if Audiobookshelf is still scanning, try again in a minute` : ""}`);
       qc.invalidateQueries();
     },
     onError: (err: Error) => toast.error(err.message),
