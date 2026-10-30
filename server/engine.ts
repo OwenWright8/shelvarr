@@ -454,7 +454,7 @@ export class Engine {
       this.db.prepare("UPDATE proposals SET status = 'applied', error = NULL, dest_rel = ?, updated_at = ? WHERE id = ?").run(dest, Date.now(), row.id);
 
     if (row.kind === "duplicate" || (row.kind === "conflict" && row.resolution === "keep_other")) {
-      const target = row.target_rel;
+      const target = row.target_rel && existingRel(destRoot, row.target_rel);
       if (!target) throw new Error("It isn't clear which book this matches");
       const targetDir = path.join(destRoot, target);
       if (!fs.existsSync(targetDir)) throw new Error(`The copy to keep (${target}) isn't in the library yet`);
@@ -471,7 +471,7 @@ export class Engine {
 
     if (row.kind === "conflict" && !row.resolution) throw new Error("Choose which copy to keep");
     // The two copies are compared at the same spot, so the other one must be in place first.
-    if (row.kind === "conflict" && row.target_rel && !fs.existsSync(path.join(destRoot, row.target_rel))) {
+    if (row.kind === "conflict" && row.target_rel && !fs.existsSync(path.join(destRoot, existingRel(destRoot, row.target_rel)))) {
       throw new Error(`Organize the other copy (${row.target_rel}) first`);
     }
     if (!row.author || !row.title) throw new Error("It needs an author and a title first");
@@ -483,7 +483,7 @@ export class Engine {
 
     if (row.kind === "conflict" && row.resolution === "keep_this") {
       // This copy replaces the other one, which goes to the trash.
-      const target = row.target_rel ?? rel;
+      const target = existingRel(destRoot, row.target_rel ?? rel);
       const targetDir = path.join(destRoot, target);
       if (fs.existsSync(targetDir)) {
         for (const name of listFiles(targetDir)) {
@@ -836,6 +836,22 @@ function listFiles(dir: string): string[] {
   };
   visit("");
   return out;
+}
+
+/** The folder on disk for a book, however its name was spelled ("Hernandez", "Hernández"). */
+function existingRel(destRoot: string, rel: string): string {
+  if (fs.existsSync(path.join(destRoot, rel))) return rel;
+  const match = (dir: string, name: string) => {
+    try {
+      return fs.readdirSync(dir).find((n) => nameKey(n) === nameKey(name)) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const [author, title] = rel.split("/");
+  const a = match(destRoot, author);
+  const t = a && match(path.join(destRoot, a), title);
+  return a && t ? `${a}/${t}` : rel;
 }
 
 function freeRel(destRoot: string, rel: string): string {

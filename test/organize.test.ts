@@ -395,6 +395,22 @@ test("a suggestion whose files have gone disappears on the next scan", async () 
   assert.ok(!(await proposals()).some((p) => p.title === "Crazy Rich Asians"));
 });
 
+test("a book is matched to its folder however the name is spelled", async () => {
+  writeBook(lib("Daisy Hernández/The Kissing Bug/kept.mp3"), { album: "The Kissing Bug", albumartist: "Daisy Hernández", artist: "Daisy Hernández", title: "The Kissing Bug" }, 2300, 70);
+  const extra = path.join(root, "audiobooks-Owen/Daisy Hernandez - The Kissing Bug.mp3");
+  writeBook(extra, { album: "The Kissing Bug", albumartist: "Daisy Hernandez", artist: "Daisy Hernandez", title: "The Kissing Bug" }, 2400, 71);
+  await scan();
+  const p = (await proposals()).find((x) => x.title === "The Kissing Bug");
+  assert.equal(p.kind, "conflict");
+  db.prepare("UPDATE proposals SET target_rel = 'Daisy Hernandez/The Kissing Bug' WHERE id = ?").run(p.id);
+  await api("PATCH", `/api/proposals/${p.id}`, { resolution: "keep_other" });
+  const res = await api("POST", "/api/proposals/apply", { ids: [p.id] });
+  assert.deepEqual(res.json.failed, []);
+  assert.ok(!fs.existsSync(extra));
+  assert.ok(fs.existsSync(lib("Daisy Hernández/The Kissing Bug/kept.mp3")));
+  assert.ok(!fs.existsSync(lib("Daisy Hernandez")));
+});
+
 test("the folders check says what's what", async () => {
   const f = (await api("GET", "/api/folders")).json;
   assert.equal(f.library.writable, true);
