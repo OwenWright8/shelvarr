@@ -16,8 +16,8 @@ import { createHash } from "node:crypto";
 import { Abs, type AbsItem, type AbsUser } from "./abs.ts";
 import { type DB, type Person, type Settings, getSettings, listPeople, logActivity, tx } from "./db.ts";
 import { type Op, type OpType, assertInside, folderSize, placeFile, quickHash, removeEmptyUp, sha256, undoOp } from "./files.ts";
-import { bookTitle, firstAuthor, nameKey, parseName, safeSegment } from "./naming.ts";
-import { type Confidence, type FoundBook, type FoundFile, type TagReader, scanBooks, walkTree } from "./scan.ts";
+import { type SeriesInfo, bookTitle, firstAuthor, nameKey, parseName, parseSeries, parseSeriesLabel, safeSegment, seriesKey } from "./naming.ts";
+import { AUDIO, type Confidence, type FoundBook, type FoundFile, type TagReader, readTags, scanBooks, walkTree } from "./scan.ts";
 
 export const TRASH_DIR = ".shelvarr-trash";
 
@@ -150,6 +150,8 @@ export class Engine {
       if (s.autoOrganize) await this.applyProposals(this.autoApplicable(), "New downloads");
     }
     await this.syncAbs();
+    // New books get a series suggestion too. It's never applied without approval.
+    await this.findSeries(false).catch((err) => logActivity(this.db, "error", `Finding series: ${errorText(err)}`));
   }
 
   // --- Scan -----------------------------------------------------------------------
@@ -601,6 +603,7 @@ export class Engine {
     tx(this.db, () => {
       this.db.prepare("UPDATE OR REPLACE owners SET rel_path = ? WHERE rel_path = ?").run(to, from);
       this.db.prepare("UPDATE OR REPLACE books SET rel_path = ?, author = ?, title = ? WHERE rel_path = ?").run(to, author, title, from);
+      this.db.prepare("UPDATE OR REPLACE series_suggestions SET rel_path = ? WHERE rel_path = ?").run(to, from);
       this.db.prepare("UPDATE proposals SET dest_rel = ? WHERE dest_rel = ?").run(to, from);
       this.db.prepare("UPDATE proposals SET target_rel = ? WHERE target_rel = ?").run(to, from);
       // Earlier changes can still be undone: their files are at the new path now.
@@ -666,6 +669,127 @@ export class Engine {
       this.db.prepare("UPDATE books SET abs_item_id = ?, abs_tags = ? WHERE rel_path = ?").run(item.id, JSON.stringify([...tags, ...missing]), rel);
     }
     if (updates.length) await abs.setTags(updates);
+  }
+
+  /** What the book's own files say about its series, best evidence first. */
+  async seriesEvidence(dir: string): Promise<{ series: SeriesInfo; source: string } | null> {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return null;
+    }
+    const audio = names.filter((n) => AUDIO.test(n) && !n.startsWith(".")).sort()[0];
+    let tags: Awaited<ReturnType<TagReader>> = {};
+    if (audio) tags = await (this.reader ?? readTags)(path.join(dir, audio)).catch(() => ({}));
+    if (tags.series?.trim()) return { series: { name: tags.series.trim(), sequence: tags.seriesPart?.trim() ? (parseSeriesLabel(`x #${tags.seriesPart.trim()}`)?.sequence ?? null) : null }, source: "tags" };
+    if (names.includes("metadata.json")) {
+      try {
+        const j = JSON.parse(fs.readFileSync(path.join(dir, "metadata.json"), "utf8")) as { series?: unknown };
+        const first = Array.isArray(j.series) ? j.series.find((x) => typeof x === "string" && x.trim()) : null;
+        const label = first ? parseSeriesLabel(first as string) : null;
+        if (label) return { series: label, source: "metadata" };
+      } catch {
+        // A broken metadata file is just no evidence.
+      }
+    }
+    for (const text of [tags.album, tags.title]) {
+      const parsed = text ? parseSeries(text) : null;
+      if (parsed) return { series: parsed, source: "title" };
+    }
+    return null;
+  }
+
+  /**
+   * Works out which series each book is in, for approval. Books Audiobookshelf
+   * already has in a series are left alone: setting a series replaces the
+   * whole list, so one set by hand must never be touched.
+   */
+  async findSeries(online: boolean): Promise<number> {
+    const s = this.settings();
+    const abs = this.abs(s);
+    if (!abs || !s.absLibraryId) return 0;
+    const prefix = `${path.posix.join(s.absRoot, s.destSubdir)}/`;
+    const items = await abs.items(s.absLibraryId);
+    const existing = new Map<string, string>();
+    const grouped = new Set<string>();
+    for (const item of items) {
+      if (!item.path?.startsWith(prefix)) continue;
+      const seriesName = item.media.metadata?.seriesName;
+      if (!seriesName) continue;
+      grouped.add(item.path.slice(prefix.length));
+      const name = parseSeriesLabel(seriesName.split(",")[0])?.name;
+      if (name) existing.set(seriesKey(name), name);
+    }
+    const books = this.db.prepare("SELECT rel_path, author, title FROM books").all() as { rel_path: string; author: string; title: string }[];
+    const known = new Map((this.db.prepare("SELECT rel_path, status FROM series_suggestions").all() as { rel_path: string; status: string }[]).map((r) => [r.rel_path, r.status]));
+    const upsert = this.db.prepare(`
+      INSERT INTO series_suggestions (rel_path, series, sequence, source, status, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (rel_path) DO UPDATE SET series = excluded.series, sequence = excluded.sequence, source = excluded.source, status = excluded.status, updated_at = excluded.updated_at
+    `);
+    let added = 0;
+    for (const book of books) {
+      const status = known.get(book.rel_path);
+      if (grouped.has(book.rel_path)) {
+        // Grouped in Audiobookshelf since: nothing left to suggest.
+        if (status === "pending") this.db.prepare("DELETE FROM series_suggestions WHERE rel_path = ?").run(book.rel_path);
+        continue;
+      }
+      if (status === "pending" || status === "skipped" || status === "applied") continue;
+      if (status === "none" && !online) continue;
+      let found = await this.seriesEvidence(path.join(this.destRoot(s), book.rel_path));
+      if (!found && online) {
+        const results = await abs.searchBooks(book.title, book.author, "audible").catch(() => []);
+        const hit = results.find((r) => nameKey(r.author ?? "").includes(nameKey(book.author)) && nameKey(bookTitle(r.title)) === nameKey(book.title) && r.series?.length);
+        const first = hit?.series?.[0];
+        if (first?.series) found = { series: { name: first.series, sequence: first.sequence ? String(first.sequence) : null }, source: "online" };
+      }
+      if (found) {
+        upsert.run(book.rel_path, found.series.name, found.series.sequence, found.source, "pending", Date.now());
+        added++;
+      } else {
+        upsert.run(book.rel_path, null, null, "none", "none", Date.now());
+      }
+    }
+    // One series, one spelling: "Hunger Games" and "The Hunger Games" must group together.
+    const pending = this.db.prepare("SELECT rel_path, series, source FROM series_suggestions WHERE status = 'pending' AND source != 'you'").all() as { rel_path: string; series: string; source: string }[];
+    const votes = new Map<string, Map<string, number>>();
+    for (const row of pending) {
+      const key = seriesKey(row.series);
+      const v = votes.get(key) ?? new Map<string, number>();
+      v.set(row.series, (v.get(row.series) ?? 0) + (row.source === "tags" || row.source === "metadata" ? 2 : 1));
+      votes.set(key, v);
+    }
+    const rename = this.db.prepare("UPDATE series_suggestions SET series = ? WHERE rel_path = ?");
+    for (const row of pending) {
+      const key = seriesKey(row.series);
+      const best = existing.get(key) ?? [...votes.get(key)!.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      if (best !== row.series) rename.run(best, row.rel_path);
+    }
+    if (added) logActivity(this.db, "scan", `Found the series for ${plural(added, "book")}, waiting for your OK`);
+    return added;
+  }
+
+  /** Sets approved series in Audiobookshelf. */
+  async applySeries(rels: string[]): Promise<number> {
+    const abs = this.abs();
+    if (!abs) throw new Error("Audiobookshelf isn't connected");
+    const updates: { id: string; name: string; sequence: string | null }[] = [];
+    const done: string[] = [];
+    for (const rel of rels) {
+      const row = this.db
+        .prepare("SELECT s.series, s.sequence, b.abs_item_id FROM series_suggestions s JOIN books b ON b.rel_path = s.rel_path WHERE s.rel_path = ? AND s.status = 'pending'")
+        .get(rel) as { series: string; sequence: string | null; abs_item_id: string | null } | undefined;
+      if (!row?.abs_item_id) continue;
+      updates.push({ id: row.abs_item_id, name: row.series, sequence: row.sequence });
+      done.push(rel);
+    }
+    if (!updates.length) return 0;
+    await abs.setSeries(updates);
+    const mark = this.db.prepare("UPDATE series_suggestions SET status = 'applied', updated_at = ? WHERE rel_path = ?");
+    for (const rel of done) mark.run(Date.now(), rel);
+    logActivity(this.db, "moved", `Set the series on ${plural(done.length, "book")} in Audiobookshelf`);
+    return done.length;
   }
 
   ownersOf(rel: string): Set<number> {

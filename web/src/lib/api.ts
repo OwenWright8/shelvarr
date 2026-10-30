@@ -84,6 +84,16 @@ export interface Book {
   owners: number[];
 }
 
+export interface SeriesSuggestion {
+  rel: string;
+  series: string;
+  sequence: string | null;
+  source: "tags" | "metadata" | "title" | "online" | "you";
+  author: string;
+  title: string;
+  itemId: string | null;
+}
+
 export interface EngineStatus {
   running: string | null;
   lastScanAt: number | null;

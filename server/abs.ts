@@ -21,7 +21,7 @@ export interface AbsItem {
   libraryId: string;
   path: string;
   relPath: string;
-  media: { tags?: string[]; coverPath?: string | null; metadata?: { title?: string; authorName?: string } };
+  media: { tags?: string[]; coverPath?: string | null; metadata?: { title?: string; authorName?: string; seriesName?: string } };
 }
 
 export interface AbsPermissions {
@@ -130,6 +130,14 @@ export class Abs {
     }
   }
 
+  /** Sets a book's series. This replaces its whole list, so only use it on books with none. */
+  async setSeries(updates: { id: string; name: string; sequence: string | null }[]) {
+    for (let i = 0; i < updates.length; i += 100) {
+      const batch = updates.slice(i, i + 100).map((u) => ({ id: u.id, mediaPayload: { metadata: { series: [{ name: u.name, sequence: u.sequence }] } } }));
+      await this.request("POST", "/api/items/batch/update", batch);
+    }
+  }
+
   async renameTag(tag: string, newTag: string) {
     await this.request("POST", "/api/tags/rename", { tag, newTag });
   }
@@ -198,13 +206,13 @@ export class Abs {
   }
 
   /** Audiobookshelf's own metadata search, so Shelvarr needs no keys of its own. */
-  async searchBooks(title: string, author: string, provider: string): Promise<{ title: string; author: string; narrator?: string; publishedYear?: string }[]> {
+  async searchBooks(title: string, author: string, provider: string): Promise<{ title: string; author: string; narrator?: string; publishedYear?: string; series?: { series: string; sequence?: string | null }[] }[]> {
     const q = new URLSearchParams({ title, author, provider });
     const res = await this.request<unknown>("GET", `/api/search/books?${q}`);
     if (!Array.isArray(res)) return [];
     return res
       .filter((r) => typeof r?.title === "string" && typeof r?.author === "string")
-      .map((r) => ({ title: r.title, author: r.author, narrator: r.narrator ?? undefined, publishedYear: r.publishedYear ?? undefined }));
+      .map((r) => ({ title: r.title, author: r.author, narrator: r.narrator ?? undefined, publishedYear: r.publishedYear ?? undefined, series: Array.isArray(r.series) ? r.series : undefined }));
   }
 
   async cover(itemId: string): Promise<Response> {

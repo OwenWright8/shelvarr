@@ -18,6 +18,7 @@ interface MockItem {
   relPath: string;
   tags: string[];
   title: string;
+  series: { name: string; sequence: string | null }[];
 }
 
 interface MockUser {
@@ -96,7 +97,7 @@ export async function startAbsMock(): Promise<AbsMock> {
         existing.relPath = path.relative(root, f.dir);
         seen.add(existing.id);
       } else {
-        const item: MockItem = { id: id("item"), libraryId, ino: f.ino, path: f.dir, relPath: path.relative(root, f.dir), tags: [], title: path.basename(f.dir) };
+        const item: MockItem = { id: id("item"), libraryId, ino: f.ino, path: f.dir, relPath: path.relative(root, f.dir), tags: [], title: path.basename(f.dir), series: [] };
         items.set(item.id, item);
         seen.add(item.id);
       }
@@ -151,13 +152,15 @@ export async function startAbsMock(): Promise<AbsMock> {
       const page = Number(url.searchParams.get("page") ?? 0);
       return send(200, {
         total: all.length,
-        results: all.slice(page * limit, (page + 1) * limit).map((i) => ({ id: i.id, libraryId: i.libraryId, path: i.path, relPath: i.relPath, media: { tags: i.tags, metadata: { title: i.title } } })),
+        results: all.slice(page * limit, (page + 1) * limit).map((i) => ({ id: i.id, libraryId: i.libraryId, path: i.path, relPath: i.relPath, media: { tags: i.tags, metadata: { title: i.title, seriesName: i.series.map((x) => (x.sequence ? `${x.name} #${x.sequence}` : x.name)).join(", ") } } })),
       });
     }
     if (p === "/api/items/batch/update" && m === "POST") {
       for (const u of json) {
         const item = items.get(u.id);
-        if (item) item.tags = u.mediaPayload.tags;
+        if (item && u.mediaPayload.tags) item.tags = u.mediaPayload.tags;
+        // Like the real one: this list replaces whatever series the book had.
+        if (item && u.mediaPayload.metadata?.series) item.series = u.mediaPayload.metadata.series;
       }
       return send(200, { success: true });
     }
@@ -197,7 +200,10 @@ export async function startAbsMock(): Promise<AbsMock> {
     if (p === "/api/search/books") {
       const q = (url.searchParams.get("title") ?? "").toLowerCase();
       const provider = url.searchParams.get("provider");
-      const catalog = [{ title: "The Wishing Spell: The Land of Stories, Book 1", author: "Chris Colfer", narrator: "Chris Colfer", publishedYear: "2012" }];
+      const catalog = [
+        { title: "The Wishing Spell: The Land of Stories, Book 1", author: "Chris Colfer", narrator: "Chris Colfer", publishedYear: "2012" },
+        { title: "Dune", author: "Frank Herbert", narrator: "Scott Brick", publishedYear: "2007", series: [{ series: "Dune Chronicles", sequence: "1" }] },
+      ];
       return send(200, provider === "audible" ? catalog.filter((c) => c.title.toLowerCase().includes(q)) : []);
     }
     r = p.match(/^\/api\/items\/([^/]+)\/cover$/);
@@ -229,8 +235,11 @@ export async function startAbsMock(): Promise<AbsMock> {
 
 /** Files with their tags, written as real (tiny) MP3s so the real tag reader runs. */
 function id3(tags: Record<string, string>): Buffer {
-  const frames = Object.entries(tags).map(([id, value]) => {
-    const text = Buffer.from([1, 0xff, 0xfe, ...Buffer.from(value, "utf16le")]);
+  const utf16 = (s: string) => [0xff, 0xfe, ...Buffer.from(s, "utf16le")];
+  const frames = Object.entries(tags).map(([key, value]) => {
+    // "TXXX:SERIES" is a custom field: a description, then the value.
+    const [id, description] = key.split(":");
+    const text = Buffer.from(description ? [1, ...utf16(description), 0, 0, ...utf16(value)] : [1, ...utf16(value)]);
     const head = Buffer.alloc(10);
     head.write(id, 0, "latin1");
     head.writeUInt32BE(text.length, 4);
@@ -248,7 +257,7 @@ function id3(tags: Record<string, string>): Buffer {
   return Buffer.concat([header, body]);
 }
 
-export function writeBook(file: string, tags: { album?: string; artist?: string; albumartist?: string; title?: string; composer?: string }, bytes = 2048, seed = 0) {
+export function writeBook(file: string, tags: { album?: string; artist?: string; albumartist?: string; title?: string; composer?: string; series?: string; part?: string }, bytes = 2048, seed = 0) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const map: Record<string, string> = {};
   if (tags.album) map.TALB = tags.album;
@@ -256,6 +265,8 @@ export function writeBook(file: string, tags: { album?: string; artist?: string;
   if (tags.albumartist) map.TPE2 = tags.albumartist;
   if (tags.title) map.TIT2 = tags.title;
   if (tags.composer) map.TCOM = tags.composer;
+  if (tags.series) map["TXXX:SERIES"] = tags.series;
+  if (tags.part) map["TXXX:PART"] = tags.part;
   const frame = Buffer.alloc(bytes, (seed * 31 + 7) & 0xff);
   // A real MPEG frame header, so it parses as audio.
   frame[0] = 0xff;

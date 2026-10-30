@@ -463,6 +463,59 @@ test("an earlier change can still be undone after a rename", async () => {
   await api("POST", "/api/proposals/skip", { ids: (await proposals()).filter((p) => p.title === "Tom Lake").map((p) => p.id) });
 });
 
+test("series are found from tags, metadata, titles and online, and set only when approved", async () => {
+  const shared = abs.libraries.find((l) => l.name === "Audiobooks")!;
+  writeBook(lib("Matt Dinniman/Dungeon Crawler Carl/1.mp3"), { album: "Dungeon Crawler Carl", albumartist: "Matt Dinniman", artist: "Matt Dinniman", title: "Dungeon Crawler Carl", series: "Dungeon Crawler Carl", part: "1" }, 2700, 90);
+  writeBook(lib("Matt Dinniman/Carl's Doomsday Scenario/2.mp3"), { album: "Dungeon Crawler Carl, Book 2 - Carl's Doomsday Scenario", albumartist: "Matt Dinniman", artist: "Matt Dinniman", title: "Carl's Doomsday Scenario" }, 2701, 91);
+  writeBook(lib("Matt Dinniman/The Gate of the Feral Gods/4.mp3"), { album: "The Gate of the Feral Gods: Dungeon Crawler Carl, Book 4", artist: "Matt Dinniman", title: "The Gate of the Feral Gods" }, 2702, 92);
+  writeBook(lib("Frank Herbert/Dune/d.mp3"), { album: "Dune", artist: "Frank Herbert", title: "Dune" }, 2703, 93);
+  writeBook(lib("Suzanne Collins/Mockingjay/m.mp3"), { album: "Hunger Games #3: Mockingjay", albumartist: "Suzanne Collins", artist: "Suzanne Collins", title: "Mockingjay" }, 2704, 94);
+  writeBook(lib("Suzanne Collins/Sunrise/s.mp3"), { album: "Sunrise", albumartist: "Suzanne Collins", artist: "Suzanne Collins", title: "Sunrise", series: "The Hunger Games", part: "5" }, 2705, 95);
+  writeBook(lib("Delia Owens/Alone/a.mp3"), { album: "Alone", artist: "Delia Owens", title: "Alone" }, 2706, 96);
+  await scan();
+  await engine.syncAbs(true);
+  // A series set by hand: never to be touched.
+  const handSet = [...abs.items.values()].find((i) => i.libraryId === shared.id && i.path.endsWith("Suzanne Collins/Mockingjay"))!;
+  handSet.series = [{ name: "My Own Name", sequence: "3" }];
+  const untouched = [...abs.items.values()].find((i) => i.libraryId === shared.id && i.path.endsWith("Delia Owens/Alone"))!;
+
+  // Without looking online, only what the files say. Nothing's applied yet.
+  await engine.findSeries(false);
+  let list = (await api("GET", "/api/series")).json as any[];
+  const of = (rel: string) => list.find((x) => x.rel === rel);
+  assert.deepEqual([of("Matt Dinniman/Dungeon Crawler Carl").series, of("Matt Dinniman/Dungeon Crawler Carl").sequence, of("Matt Dinniman/Dungeon Crawler Carl").source], ["Dungeon Crawler Carl", "1", "tags"]);
+  assert.deepEqual([of("Matt Dinniman/Carl's Doomsday Scenario").series, of("Matt Dinniman/Carl's Doomsday Scenario").sequence, of("Matt Dinniman/Carl's Doomsday Scenario").source], ["Dungeon Crawler Carl", "2", "title"]);
+  assert.equal(of("Matt Dinniman/The Gate of the Feral Gods").sequence, "4");
+  assert.equal(of("Suzanne Collins/Mockingjay"), undefined);
+  assert.equal(of("Frank Herbert/Dune"), undefined);
+  assert.deepEqual([...abs.items.values()].filter((i) => i.path.includes("Matt Dinniman")).flatMap((i) => i.series), []);
+
+  // Online fills the gaps, if a matching book says so.
+  await api("POST", "/api/series/find", {});
+  while (engine.status.running) await new Promise((r) => setTimeout(r, 10));
+  list = (await api("GET", "/api/series")).json as any[];
+  assert.deepEqual([of("Frank Herbert/Dune").series, of("Frank Herbert/Dune").source], ["Dune Chronicles", "online"]);
+  assert.equal(of("Delia Owens/Alone"), undefined);
+
+  // One series, one spelling: this follows the name already in Audiobookshelf.
+  assert.equal(of("Suzanne Collins/Sunrise").series, "The Hunger Games");
+
+  // Corrected by hand, then approved.
+  await api("PATCH", "/api/series", { rel: "Frank Herbert/Dune", series: "Dune", sequence: "1" });
+  const applied = await api("POST", "/api/series/apply", { rels: list.map((x) => x.rel) });
+  assert.equal(applied.json.ok, list.length);
+  const series = (end: string) => [...abs.items.values()].find((i) => i.libraryId === shared.id && i.path.endsWith(end))!.series;
+  assert.deepEqual(series("Matt Dinniman/The Gate of the Feral Gods"), [{ name: "Dungeon Crawler Carl", sequence: "4" }]);
+  assert.deepEqual(series("Frank Herbert/Dune"), [{ name: "Dune", sequence: "1" }]);
+  assert.deepEqual(handSet.series, [{ name: "My Own Name", sequence: "3" }]);
+  assert.deepEqual(untouched.series, []);
+  assert.deepEqual((await api("GET", "/api/series")).json, []);
+
+  // And it doesn't come back on the next pass.
+  await engine.findSeries(true);
+  assert.deepEqual((await api("GET", "/api/series")).json, []);
+});
+
 test("the folders check says what's what", async () => {
   const f = (await api("GET", "/api/folders")).json;
   assert.equal(f.library.writable, true);

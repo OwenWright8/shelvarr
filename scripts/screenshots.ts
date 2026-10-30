@@ -192,6 +192,18 @@ try {
     await engine.tick();
     if (!fs.existsSync(path.join(root, "library/Richard Osman/The Thursday Murder Club"))) throw new Error("download wasn't organized");
   });
+  await step("series", async () => {
+    await p.goto(`${base}/review`);
+    await p.getByRole("button", { name: /^Series/ }).click();
+    await p.getByRole("button", { name: "Find series" }).click();
+    await idle();
+    await p.getByText("from the book's full title").first().waitFor();
+    await shot(p, "series");
+    await p.getByRole("button", { name: /^Set all/ }).click();
+    await p.getByText(/Set the series on \d+ book/).first().waitFor();
+    const shared = abs.libraries.find((l) => l.name === "Audiobooks")!;
+    if (![...abs.items.values()].some((i) => i.libraryId === shared.id && i.series.some((x) => x.name === "Hunger Games"))) throw new Error("series didn't reach Audiobookshelf");
+  });
   await step("activity", async () => {
     await p.goto(`${base}/activity`);
     await p.getByRole("button", { name: "Empty trash" }).waitFor();

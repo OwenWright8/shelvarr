@@ -164,3 +164,51 @@ export function looksLikePartName(stem: string): boolean {
 export function isGenericTitle(s: string): boolean {
   return /^(?:track|chapter|part|disc|cd|side|tape|audio|untitled)?[\s._-]*\d*$/i.test(s.trim()) || /^(?:unknown|untitled)/i.test(s.trim());
 }
+
+export interface SeriesInfo {
+  name: string;
+  sequence: string | null;
+}
+
+const WORD_NUMBERS: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12" };
+
+function bookNumber(raw: string): string | null {
+  const s = raw.toLowerCase();
+  if (WORD_NUMBERS[s]) return WORD_NUMBERS[s];
+  return /^\d+(?:\.\d+)?$/.test(s) ? s.replace(/^0+(?=\d)/, "") : null;
+}
+
+/** "Dungeon Crawler Carl #4" or "Dune, Book 1", as metadata files and tags write them. */
+export function parseSeriesLabel(raw: string): SeriesInfo | null {
+  const s = raw.trim();
+  if (!s) return null;
+  const m = s.match(/^(.+?)\s*(?:#|,\s*Book\s+)(\S+)$/i);
+  return m ? { name: m[1].trim(), sequence: bookNumber(m[2]) } : { name: s, sequence: null };
+}
+
+/** The series named inside a title. Every pattern here comes from a real album tag. */
+export function parseSeries(raw: string): SeriesInfo | null {
+  const s = cleanName(raw);
+  const found = (name: string, num: string): SeriesInfo | null => {
+    const sequence = bookNumber(num);
+    return sequence && name.trim() ? { name: name.trim(), sequence } : null;
+  };
+  // "Dungeon Crawler Carl, Book 2 - Carl's Doomsday Scenario"
+  let m = s.match(/^(.+?),\s*Book\s+([\w.]+)\s*[-–:]\s*.+$/i);
+  if (m) return found(m[1], m[2]);
+  // "The Gate of the Feral Gods: Dungeon Crawler Carl, Book 4"
+  m = s.match(/^.+?(?::|\s[-–]\s)\s*([^:]+?),\s*(?:Book|Vol(?:ume)?\.?)\s+([\w.]+)$/i);
+  if (m) return found(m[1], m[2]);
+  // "The Lost World - Book Two in the Jurassic Park Series"
+  m = s.match(/^.+?[-–:]\s*Book\s+(\w+)\s+(?:in|of)\s+(?:the\s+)?(.+?)(?:\s+Series)?$/i);
+  if (m) return found(m[2], m[1]);
+  // "Hunger Games #2: Catching Fire", "Diary of a Wimpy Kid 16 - Diary of a Wimpy Kid: Big Shot"
+  m = s.match(/^(.+?)\s#?(\d{1,3}(?:\.\d+)?)\s*[:\-–]\s+.+$/);
+  if (m) return found(m[1], m[2]);
+  return null;
+}
+
+/** For matching series spelled with and without a leading "The". */
+export function seriesKey(name: string): string {
+  return nameKey(name).replace(/^the /, "");
+}

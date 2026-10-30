@@ -1,7 +1,7 @@
 // Every case here is a real file name or tag from a real library.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bookTitle, cleanName, firstAuthor, nameKey, parseName, safeSegment, stripPartNumber } from "../server/naming.ts";
+import { bookTitle, cleanName, firstAuthor, nameKey, parseName, parseSeries, parseSeriesLabel, safeSegment, seriesKey, stripPartNumber } from "../server/naming.ts";
 
 test("titles lose series and edition noise, but keep what tells editions apart", () => {
   assert.equal(bookTitle("Hunger Games #2: Catching Fire"), "Catching Fire");
@@ -59,6 +59,29 @@ test("part numbers come off, and real names are safe on any disk", () => {
   assert.equal(safeSegment("Who? What/When"), "Who What When");
   assert.equal(nameKey("Daisy Hernández"), nameKey("daisy hernandez"));
   assert.equal(nameKey("J.K. Rowling"), nameKey("J K Rowling"));
+});
+
+test("series named inside titles", () => {
+  const s = (t: string) => {
+    const r = parseSeries(t);
+    return r && [r.name, r.sequence];
+  };
+  assert.deepEqual(s("Dungeon Crawler Carl, Book 2 - Carl's Doomsday Scenario"), ["Dungeon Crawler Carl", "2"]);
+  assert.deepEqual(s("The Gate of the Feral Gods: Dungeon Crawler Carl, Book 4"), ["Dungeon Crawler Carl", "4"]);
+  assert.deepEqual(s("A Parade of Horribles: Dungeon Crawler Carl, Book 8"), ["Dungeon Crawler Carl", "8"]);
+  assert.deepEqual(s("Hunger Games #2: Catching Fire"), ["Hunger Games", "2"]);
+  assert.deepEqual(s("Diary of a Wimpy Kid 16 - Diary of a Wimpy Kid: Big Shot"), ["Diary of a Wimpy Kid", "16"]);
+  assert.deepEqual(s("Diary of a Wimpy Kid 01 - Diary of a Wimpy Kid"), ["Diary of a Wimpy Kid", "1"]);
+  assert.deepEqual(s("The Wishing Spell: The Land of Stories, Book 1"), ["The Land of Stories", "1"]);
+  assert.deepEqual(s("The Lost World - Book Two in the Jurassic Park Series"), ["Jurassic Park", "2"]);
+  // Not series.
+  assert.equal(s("Project Hail Mary"), null);
+  assert.equal(s("Fahrenheit 451"), null);
+  assert.equal(s("Airframe: A Novel"), null);
+  assert.equal(s("Tuesdays with Morrie"), null);
+  assert.deepEqual(parseSeriesLabel("Dungeon Crawler Carl #1"), { name: "Dungeon Crawler Carl", sequence: "1" });
+  assert.deepEqual(parseSeriesLabel("Dune"), { name: "Dune", sequence: null });
+  assert.equal(seriesKey("The Hunger Games"), seriesKey("Hunger Games"));
 });
 
 function pick(p: { author?: string; title?: string }) {

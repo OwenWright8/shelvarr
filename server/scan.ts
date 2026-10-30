@@ -19,13 +19,25 @@ export interface FileTags {
   year?: string;
   track?: number | null;
   disc?: number | null;
+  series?: string;
+  seriesPart?: string;
 }
 
 export type TagReader = (file: string) => Promise<FileTags>;
 
 export const readTags: TagReader = async (file) => {
-  const { common: c } = await parseFile(file, { duration: false, skipCovers: true });
+  const { common: c, native } = await parseFile(file, { duration: false, skipCovers: true });
+  // Taggers use different fields: tone's SERIES/PART, MP3 TXXX ones, iTunes "movement".
+  const custom = (pattern: RegExp) => {
+    for (const tags of Object.values(native)) {
+      const hit = tags.find((t) => pattern.test(String(t.id)));
+      if (hit && hit.value != null) return String(hit.value);
+    }
+    return undefined;
+  };
   return {
+    series: custom(/(?:^|:)series$/i) ?? c.movement ?? custom(/^(?:©mvn|mvnm)$/i),
+    seriesPart: custom(/(?:^|:)(?:part|series-part)$/i) ?? (c.movementIndex?.no != null ? String(c.movementIndex.no) : undefined),
     album: c.album,
     albumartist: c.albumartist,
     artist: c.artist,

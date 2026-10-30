@@ -191,8 +191,8 @@ No. Use it just to organize, with your own library pointing at the `library` fol
 **A book's name came out wrong?**<br/>
 Click the pencil under it in the **Library**. That renames its folder, and Audiobookshelf keeps it as the same book, with its progress. Undo is under **Activity**.
 
-**What about series folders (`Author/Series/Book`)?**<br/>
-Not yet: Shelvarr uses `Author/Book`. Audiobookshelf still shows series from its metadata.
+**What about series?**<br/>
+Folders stay `Author/Book`, because Audiobookshelf groups series from metadata, not folders. Under **Review → Series**, Shelvarr suggests each book's series and number from its tags, its metadata file or its full title (`Dungeon Crawler Carl, Book 4`), and can look up the rest online. You approve them, and it only touches books that have no series yet.
 
 **Two different files of the same book?**<br/>
 It asks: keep one, or keep both (the second becomes `Title (2)`).

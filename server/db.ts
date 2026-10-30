@@ -124,6 +124,18 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX activity_at ON activity (at DESC);
   `,
+  `
+  -- Which series a book seems to be in, waiting for approval. "none" means we
+  -- looked and found nothing, so it isn't looked up on every pass.
+  CREATE TABLE series_suggestions (
+    rel_path TEXT PRIMARY KEY,
+    series TEXT,
+    sequence TEXT,
+    source TEXT NOT NULL,               -- tags | metadata | title | online | you
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | applied | skipped | none
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

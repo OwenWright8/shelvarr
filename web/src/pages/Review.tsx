@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, CheckCheck, Copy, Files, ListChecks, Pencil, RefreshCw, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCheck, Copy, Files, Layers, ListChecks, Pencil, RefreshCw, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { api, formatBytes, get, type Person, type Proposal } from "@/lib/api";
+import { api, formatBytes, get, type Person, type Proposal, type SeriesSuggestion } from "@/lib/api";
 import { PageHeader, useEngine } from "@/components/Layout";
 import { faceLabel, usePeople } from "@/components/people";
 import { Badge, Button, EmptyState, Field, Input, Modal, PageSpinner, Segmented, Spinner, cn } from "@/components/ui";
 
-type Tab = "look" | "ready" | "duplicates" | "done";
+type Tab = "look" | "ready" | "duplicates" | "series" | "done";
 
 const needsLook = (p: Proposal) => p.status === "failed" || p.confidence !== "high" || !p.author || !p.title || (p.kind === "conflict" && !p.resolution);
 
@@ -17,6 +17,7 @@ export default function ReviewPage() {
   const people = usePeople();
   const pending = useQuery({ queryKey: ["proposals"], queryFn: () => get<Proposal[]>("/proposals") });
   const done = useQuery({ queryKey: ["proposals", "done"], queryFn: () => get<Proposal[]>("/proposals?status=done") });
+  const series = useQuery({ queryKey: ["series"], queryFn: () => get<SeriesSuggestion[]>("/series") });
   const [tab, setTab] = useState<Tab>("ready");
   const [editing, setEditing] = useState<Proposal | null>(null);
   const [confirm, setConfirm] = useState<Proposal[] | null>(null);
@@ -32,7 +33,7 @@ export default function ReviewPage() {
 
   useEffect(() => {
     if (!pending.data) return;
-    if (tab === "ready" && !groups.ready.length) setTab(groups.look.length ? "look" : groups.duplicates.length ? "duplicates" : "ready");
+    if (tab === "ready" && !groups.ready.length) setTab(groups.look.length ? "look" : groups.duplicates.length ? "duplicates" : series.data?.length ? "series" : "ready");
     // Only when the data arrives, not when someone picks a tab.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending.data]);
@@ -58,7 +59,7 @@ export default function ReviewPage() {
   });
 
   if (!pending.data || !people.data) return <PageSpinner />;
-  const list = tab === "done" ? (done.data ?? []) : groups[tab];
+  const list = tab === "done" ? (done.data ?? []) : tab === "series" ? [] : groups[tab];
   const total = pending.data.length;
   const freed = groups.duplicates.reduce((n, p) => n + p.size, 0);
   // Everything that can go right now, duplicates after what they merge into.
@@ -95,6 +96,7 @@ export default function ReviewPage() {
             { value: "look", label: `Needs a look ${groups.look.length}` },
             { value: "ready", label: `Ready ${groups.ready.length}` },
             { value: "duplicates", label: `Duplicates ${groups.duplicates.length}` },
+            { value: "series", label: `Series ${series.data?.length ?? 0}` },
             { value: "done", label: "Done" },
           ]}
         />
@@ -104,7 +106,9 @@ export default function ReviewPage() {
           Byte-for-byte copies of a book, checked again before anything's removed. Merging frees <strong className="font-medium text-foreground">{formatBytes(freed)}</strong> once you empty the trash, and everyone keeps access.
         </p>
       )}
-      {list.length === 0 ? (
+      {tab === "series" ? (
+        <SeriesTab list={series.data ?? []} />
+      ) : list.length === 0 ? (
         <EmptyState icon={<ListChecks className="h-5 w-5" />} title={total === 0 && tab !== "done" ? "All tidy" : "Nothing here"}>
           {total === 0 && tab !== "done" ? "Nothing's waiting. Scan to check again." : undefined}
         </EmptyState>
@@ -149,6 +153,88 @@ export default function ReviewPage() {
         </Modal>
       )}
     </div>
+  );
+}
+
+const SOURCE: Record<SeriesSuggestion["source"], string> = {
+  tags: "from the audio file's tags",
+  metadata: "from the metadata file",
+  title: "from the book's full title",
+  online: "looked up online",
+  you: "set by you",
+};
+
+function SeriesTab({ list }: { list: SeriesSuggestion[] }) {
+  const qc = useQueryClient();
+  const { status } = useEngine();
+  const [editing, setEditing] = useState<SeriesSuggestion | null>(null);
+  const opts = {
+    onSuccess: () => qc.invalidateQueries(),
+    onError: (err: Error) => toast.error(err.message),
+  };
+  const find = useMutation({ mutationFn: () => api("POST", "/series/find", {}), ...opts });
+  const apply = useMutation({
+    mutationFn: (rels: string[]) => api<{ ok: number }>("POST", "/series/apply", { rels }),
+    onSuccess: (r) => {
+      toast.success(`Set the series on ${r.ok} book${r.ok === 1 ? "" : "s"} in Audiobookshelf`);
+      qc.invalidateQueries();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+  const skip = useMutation({ mutationFn: (rels: string[]) => api("POST", "/series/skip", { rels }), ...opts });
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <p className="mr-auto max-w-2xl text-sm text-muted-foreground">Books Audiobookshelf doesn't have in a series yet. Series you've already set are never changed.</p>
+        <Button variant="outline" size="sm" onClick={() => find.mutate()} loading={find.isPending || !!status?.running}><Search className="h-4 w-4" /> Find series</Button>
+        {list.length > 0 && <Button size="sm" onClick={() => apply.mutate(list.map((x) => x.rel))} loading={apply.isPending}><CheckCheck className="h-4 w-4" /> Set all {list.length}</Button>}
+      </div>
+      {list.length === 0 ? (
+        <EmptyState icon={<Layers className="h-5 w-5" />} title="No series waiting">Click Find series to check your books, including a lookup online for any that don't say.</EmptyState>
+      ) : (
+        <div className="divide-y rounded-xl border bg-card">
+          {list.map((x) => (
+            <div key={x.rel} className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate font-medium">{x.title}</span>
+                  <span className="text-sm text-muted-foreground">{x.author}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground/80">{x.series}{x.sequence ? ` #${x.sequence}` : ""}</span> · {SOURCE[x.source]}
+                </div>
+              </div>
+              <button onClick={() => setEditing(x)} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted" aria-label={`Edit series for ${x.title}`}><Pencil className="h-4 w-4" /></button>
+              <Button variant="ghost" size="sm" onClick={() => skip.mutate([x.rel])}>Leave</Button>
+              <Button variant="outline" size="sm" onClick={() => apply.mutate([x.rel])} disabled={apply.isPending}>Set</Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && <SeriesModal item={editing} onClose={() => setEditing(null)} />}
+    </div>
+  );
+}
+
+function SeriesModal({ item, onClose }: { item: SeriesSuggestion; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [series, setSeries] = useState(item.series);
+  const [sequence, setSequence] = useState(item.sequence ?? "");
+  const save = useMutation({
+    mutationFn: () => api("PATCH", "/series", { rel: item.rel, series, sequence }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["series"] });
+      onClose();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  return (
+    <Modal open onClose={onClose} title={item.title} footer={<><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={() => save.mutate()} loading={save.isPending} disabled={!series.trim()}>Save</Button></>}>
+      <div className="space-y-4 pb-2">
+        <Field label="Series" htmlFor="s-name"><Input id="s-name" value={series} onChange={(e) => setSeries(e.target.value)} /></Field>
+        <Field label="Book number" htmlFor="s-num"><Input id="s-num" value={sequence} onChange={(e) => setSequence(e.target.value)} /></Field>
+      </div>
+    </Modal>
   );
 }
 

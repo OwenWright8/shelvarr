@@ -144,7 +144,7 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
       size: sum("SELECT sum(size) AS n FROM books"),
       unowned: count("SELECT count(*) AS n FROM books b WHERE NOT EXISTS (SELECT 1 FROM owners o WHERE o.rel_path = b.rel_path)"),
       shared: count("SELECT count(*) AS n FROM (SELECT rel_path FROM owners GROUP BY rel_path HAVING count(*) > 1)"),
-      toReview: count("SELECT count(*) AS n FROM proposals WHERE status IN ('pending', 'failed')"),
+      toReview: count("SELECT count(*) AS n FROM proposals WHERE status IN ('pending', 'failed')") + count("SELECT count(*) AS n FROM series_suggestions WHERE status = 'pending'"),
       duplicateSize: sum("SELECT sum(size) AS n FROM proposals WHERE status = 'pending' AND kind = 'duplicate' AND scope = 'library'"),
       trashSize: s.libraryRoot ? engine.trashSize(s) : 0,
     };
@@ -401,6 +401,49 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     } catch (err) {
       return reply.code(502).send({ error: errorText(err) });
     }
+  });
+
+  // --- Series -------------------------------------------------------------------------
+
+  app.get("/api/series", async () =>
+    (db.prepare(
+      `SELECT s.rel_path, s.series, s.sequence, s.source, b.author, b.title, b.abs_item_id FROM series_suggestions s
+       JOIN books b ON b.rel_path = s.rel_path WHERE s.status = 'pending' ORDER BY lower(s.series), CAST(s.sequence AS REAL), lower(b.title)`,
+    ).all() as { rel_path: string; series: string; sequence: string | null; source: string; author: string; title: string; abs_item_id: string | null }[]).map((r) => ({
+      rel: r.rel_path,
+      series: r.series,
+      sequence: r.sequence,
+      source: r.source,
+      author: r.author,
+      title: r.title,
+      itemId: r.abs_item_id,
+    })),
+  );
+
+  /** Looks through every book without a series, asking online about the ones that don't say. */
+  app.post("/api/series/find", async () => background("Finding series", () => engine.findSeries(true)));
+
+  app.post<{ Body: { rels?: string[] } }>("/api/series/apply", async (req, reply) => {
+    try {
+      return { ok: await engine.exclusive("Setting series", () => engine.applySeries(arrayOf(req.body?.rels, "string"))) };
+    } catch (err) {
+      return reply.code(502).send({ error: errorText(err) });
+    }
+  });
+
+  app.post<{ Body: { rels?: string[] } }>("/api/series/skip", async (req) => {
+    const stmt = db.prepare("UPDATE series_suggestions SET status = 'skipped', updated_at = ? WHERE rel_path = ?");
+    for (const rel of arrayOf(req.body?.rels, "string")) stmt.run(Date.now(), rel);
+    return { ok: true };
+  });
+
+  app.patch<{ Body: { rel?: string; series?: string; sequence?: string | null } }>("/api/series", async (req, reply) => {
+    const series = String(req.body?.series ?? "").trim().slice(0, 200);
+    if (!series) return reply.code(400).send({ error: "Give the series a name" });
+    const raw = req.body?.sequence;
+    const sequence = raw == null || !String(raw).trim() ? null : String(raw).trim().slice(0, 20);
+    db.prepare("UPDATE series_suggestions SET series = ?, sequence = ?, source = 'you', updated_at = ? WHERE rel_path = ? AND status = 'pending'").run(series, sequence, Date.now(), String(req.body?.rel ?? ""));
+    return { ok: true };
   });
 
   // --- People ------------------------------------------------------------------------
