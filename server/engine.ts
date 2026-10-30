@@ -682,22 +682,28 @@ export class Engine {
     const audio = names.filter((n) => AUDIO.test(n) && !n.startsWith(".")).sort()[0];
     let tags: Awaited<ReturnType<TagReader>> = {};
     if (audio) tags = await (this.reader ?? readTags)(path.join(dir, audio)).catch(() => ({}));
-    if (tags.series?.trim()) return { series: { name: tags.series.trim(), sequence: tags.seriesPart?.trim() ? (parseSeriesLabel(`x #${tags.seriesPart.trim()}`)?.sequence ?? null) : null }, source: "tags" };
+    // Whatever the title says, in case the better sources give a name but no number.
+    let fromTitle: SeriesInfo | null = null;
+    for (const text of [tags.album, tags.title]) fromTitle ??= text ? parseSeries(text) : null;
+    const withNumber = (name: string, sequence: string | null): SeriesInfo => {
+      if (sequence || !fromTitle) return { name, sequence };
+      return { name, sequence: seriesKey(fromTitle.name) === seriesKey(name) ? fromTitle.sequence : null };
+    };
+    if (tags.series?.trim()) {
+      const part = tags.seriesPart?.trim() ? (parseSeriesLabel(`x #${tags.seriesPart.trim()}`)?.sequence ?? null) : null;
+      return { series: withNumber(tags.series.trim(), part), source: "tags" };
+    }
     if (names.includes("metadata.json")) {
       try {
         const j = JSON.parse(fs.readFileSync(path.join(dir, "metadata.json"), "utf8")) as { series?: unknown };
         const first = Array.isArray(j.series) ? j.series.find((x) => typeof x === "string" && x.trim()) : null;
         const label = first ? parseSeriesLabel(first as string) : null;
-        if (label) return { series: label, source: "metadata" };
+        if (label) return { series: withNumber(label.name, label.sequence), source: "metadata" };
       } catch {
         // A broken metadata file is just no evidence.
       }
     }
-    for (const text of [tags.album, tags.title]) {
-      const parsed = text ? parseSeries(text) : null;
-      if (parsed) return { series: parsed, source: "title" };
-    }
-    return null;
+    return fromTitle ? { series: fromTitle, source: "title" } : null;
   }
 
   /**

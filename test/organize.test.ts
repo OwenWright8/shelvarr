@@ -472,6 +472,9 @@ test("series are found from tags, metadata, titles and online, and set only when
   writeBook(lib("Suzanne Collins/Mockingjay/m.mp3"), { album: "Hunger Games #3: Mockingjay", albumartist: "Suzanne Collins", artist: "Suzanne Collins", title: "Mockingjay" }, 2704, 94);
   writeBook(lib("Suzanne Collins/Sunrise/s.mp3"), { album: "Sunrise", albumartist: "Suzanne Collins", artist: "Suzanne Collins", title: "Sunrise", series: "The Hunger Games", part: "5" }, 2705, 95);
   writeBook(lib("Delia Owens/Alone/a.mp3"), { album: "Alone", artist: "Delia Owens", title: "Alone" }, 2706, 96);
+  // A metadata file with the series but no number: the title knows it.
+  writeBook(lib("Chris Colfer/Enchantress/e.mp3"), { album: "The Enchantress Returns: The Land of Stories, Book 2", albumartist: "Chris Colfer", artist: "Chris Colfer", title: "Enchantress" }, 2707, 97);
+  fs.writeFileSync(lib("Chris Colfer/Enchantress/metadata.json"), JSON.stringify({ title: "Enchantress", series: ["The Land of Stories"] }));
   await scan();
   await engine.syncAbs(true);
   // A series set by hand: never to be touched.
@@ -486,6 +489,7 @@ test("series are found from tags, metadata, titles and online, and set only when
   assert.deepEqual([of("Matt Dinniman/Dungeon Crawler Carl").series, of("Matt Dinniman/Dungeon Crawler Carl").sequence, of("Matt Dinniman/Dungeon Crawler Carl").source], ["Dungeon Crawler Carl", "1", "tags"]);
   assert.deepEqual([of("Matt Dinniman/Carl's Doomsday Scenario").series, of("Matt Dinniman/Carl's Doomsday Scenario").sequence, of("Matt Dinniman/Carl's Doomsday Scenario").source], ["Dungeon Crawler Carl", "2", "title"]);
   assert.equal(of("Matt Dinniman/The Gate of the Feral Gods").sequence, "4");
+  assert.deepEqual([of("Chris Colfer/Enchantress").series, of("Chris Colfer/Enchantress").sequence, of("Chris Colfer/Enchantress").source], ["The Land of Stories", "2", "metadata"]);
   assert.equal(of("Suzanne Collins/Mockingjay"), undefined);
   assert.equal(of("Frank Herbert/Dune"), undefined);
   assert.deepEqual([...abs.items.values()].filter((i) => i.path.includes("Matt Dinniman")).flatMap((i) => i.series), []);
