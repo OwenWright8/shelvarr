@@ -567,10 +567,24 @@ export async function buildApp(opts: AppOptions): Promise<{ app: FastifyInstance
     const abs = engine.abs(s);
     if (!abs) return reply.code(400).send({ error: "Connect Audiobookshelf first" });
     try {
+      // Audiobookshelf's own libraries show where it really sees the audiobooks
+      // folder ("/audiobooks/audiobooks-Owen" means "/audiobooks"), which beats
+      // a setting that's easy to get wrong.
+      const allLibraries = await abs.libraries();
+      for (const p of listPeople(db)) {
+        const seen = p.folder ? allLibraries.flatMap((l) => l.folders.map((f) => f.fullPath)).find((f) => path.posix.basename(f) === p.folder) : null;
+        const root = seen ? path.posix.dirname(seen) : null;
+        if (root && root !== s.absRoot) {
+          logActivity(db, "access", `Audiobookshelf sees the audiobooks folder at ${root}, not ${s.absRoot}: corrected`);
+          saveSettings(db, { absRoot: root });
+          s.absRoot = root;
+        }
+        if (root) break;
+      }
       const folder = path.posix.join(s.absRoot, s.destSubdir);
       // It has to exist before Audiobookshelf will accept it.
       fs.mkdirSync(engine.destRoot(s), { recursive: true });
-      const existing = (await abs.libraries()).find((l) => l.folders.some((f) => f.fullPath === folder));
+      const existing = allLibraries.find((l) => l.folders.some((f) => f.fullPath === folder));
       const lib = existing ?? (await abs.createLibrary(String(req.body?.name ?? "").trim() || "Audiobooks", folder));
       saveSettings(db, { absLibraryId: lib.id });
       await abs.scan(lib.id).catch(() => {});

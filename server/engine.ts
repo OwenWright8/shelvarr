@@ -142,6 +142,8 @@ export class Engine {
   /** The regular pass: pick up new downloads, then bring tags up to date. */
   async tick() {
     const s = this.settings();
+    // Nothing happens on its own until setup is finished and its choices are made.
+    if (!s.setupComplete) return;
     if (s.incomingDir && fs.existsSync(s.incomingDir)) {
       await this.scanIncoming();
       await this.lookupUnsure();

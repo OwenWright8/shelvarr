@@ -66,7 +66,7 @@ before(async () => {
   db = openDb(":memory:");
   ({ app, engine } = await buildApp({ db, version: "v1.0.0", repo: "x/y", updateCheck: false }));
   await api("POST", "/api/account/create", { username: "owen", password: "correct horse" });
-  await api("PUT", "/api/settings", { absUrl: abs.url, absToken: ABS_TOKEN, libraryRoot: root, absRoot: root, incomingDir: incoming, settleMinutes: 0 });
+  await api("PUT", "/api/settings", { absUrl: abs.url, absToken: ABS_TOKEN, libraryRoot: root, absRoot: root, incomingDir: incoming, settleMinutes: 0, setupComplete: true });
   ids.owen = (await api("POST", "/api/people", { name: "Owen", tag: "Owen", absUserId: "user-owen", folder: "audiobooks-Owen" })).json.id;
   ids.alex = (await api("POST", "/api/people", { name: "Alex", tag: "Alex", absUserId: "user-alex", folder: "audiobooks-Alex" })).json.id;
   ids.jamie = (await api("POST", "/api/people", { name: "Jamie", tag: "Jamie", absUserId: "user-jamie", folder: "audiobooks-Jamie" })).json.id;
@@ -244,6 +244,11 @@ test("a new download goes to the default owner, and the original stays for seedi
   await api("PUT", "/api/settings", { defaultOwners: [ids.owen], incomingMode: "hardlink" });
   const file = path.join(incoming, "The Thursday Murder Club by Richard Osman.mp3");
   writeBook(file, { album: "The Thursday Murder Club: The Thursday Murder Club, Book 1", artist: "Richard Osman", title: "The Thursday Murder Club" }, 5000, 20);
+  // Until setup is finished, nothing happens on its own.
+  await api("PUT", "/api/settings", { setupComplete: false });
+  await engine.tick();
+  assert.ok(!fs.existsSync(lib("Richard Osman")));
+  await api("PUT", "/api/settings", { setupComplete: true });
   await engine.tick();
   const placed = lib("Richard Osman/The Thursday Murder Club/The Thursday Murder Club by Richard Osman.mp3");
   assert.ok(fs.existsSync(placed));
@@ -318,7 +323,10 @@ test("moving to one library: progress is carried over, tags and access follow", 
   // One copy survives; which one doesn't matter, they're identical.
   assert.equal(tree(lib("Delia Owens/Where the Crawdads Sing")).length, 1);
 
+  // A wrong path for Audiobookshelf's view is corrected from its own libraries.
+  await api("PUT", "/api/settings", { absRoot: "/media/audiobooks" });
   const made = await api("POST", "/api/migrate/library", { name: "Audiobooks" });
+  assert.equal((await api("GET", "/api/settings")).json.absRoot, root);
   assert.equal(made.status, 200);
   assert.equal(abs.libraries.find((l) => l.id === made.json.id)?.folders[0].fullPath, path.join(root, "library"));
   // Linked users can reach it; the admin already can.
